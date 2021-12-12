@@ -1,11 +1,10 @@
-
-  
 const solanaWeb3 = require('@solana/web3.js');
 const { Connection, programs } = require('@metaplex/js');
 const axios = require('axios');
+const logger = require('./logger');
 
 if (!process.env.PROJECT_ADDRESS || !process.env.DISCORD_URL) {
-    console.log("please set your environment variables!");
+    logger.error("Please set your environment variables!");
     return;
 }
 
@@ -25,7 +24,7 @@ const marketplaceMap = {
 };
 
 const runSalesBot = async () => {
-    console.log("starting sales bot...");
+    logger.info("Starting sales bot...");
 
     let signatures;
     let lastKnownSignature;
@@ -34,12 +33,12 @@ const runSalesBot = async () => {
         try {
             signatures = await solanaConnection.getSignaturesForAddress(projectPubKey, options);
             if (!signatures.length) {
-                console.log("polling...")
+                logger.debug("Polling for signatures...")
                 await timer(pollingInterval);
                 continue;
             }
         } catch (err) {
-            console.log("error fetching signatures: ", err);
+            logger.error("Could not fetch signatures: " + err);
             continue;
         }
 
@@ -57,17 +56,30 @@ const runSalesBot = async () => {
                 if (marketplaceMap[marketplaceAccount]) {
                     const metadata = await getMetadata(txn.meta.postTokenBalances[0].mint);
                     if (!metadata) {
-                        console.log("couldn't get metadata");
+                        logger.error("Could not fetch metadata");
                         continue;
                     }
 
-                    printSalesInfo(dateString, price, signature, metadata.name, marketplaceMap[marketplaceAccount], metadata.image);
-                    await postSaleToDiscord(metadata.name, price, dateString, signature, metadata.image)
+                    logger.info("New Sale Found!")
+                    logger.info({
+                        date: dateString,
+                        price,
+                        signature,
+                        title: metadata.name,
+                        marketplace: marketplaceMap[marketplaceAccount],
+                        image: metadata.image
+                    })
+
+                    try {
+                        await postSaleToDiscord(metadata.name, price, dateString, signature, metadata.image)
+                    } catch (err) {
+                        logger.error("Could not POST to Discord: " + err)
+                    }
                 } else {
-                    console.log("not a supported marketplace sale");
+                    logger.error("Marketplace not supported: " + marketplaceAccount);
                 }
             } catch (err) {
-                console.log("error while going through signatures: ", err);
+                logger.error(err);
                 continue;
             }
         }
@@ -80,15 +92,6 @@ const runSalesBot = async () => {
 }
 runSalesBot();
 
-const printSalesInfo = (date, price, signature, title, marketplace, imageURL) => {
-    console.log("-------------------------------------------")
-    console.log(`Sale at ${date} ---> ${price} SOL`)
-    console.log("Signature: ", signature)
-    console.log("Name: ", title)
-    console.log("Image: ", imageURL)
-    console.log("Marketplace: ", marketplace)
-}
-
 const timer = ms => new Promise(res => setTimeout(res, ms))
 
 const getMetadata = async (tokenPubKey) => {
@@ -99,12 +102,12 @@ const getMetadata = async (tokenPubKey) => {
 
         return data;
     } catch (error) {
-        console.log("error fetching metadata: ", error)
+        logger.error("Could not fetch metadata: " + error)
     }
 }
 
-const postSaleToDiscord = (title, price, date, signature, imageURL) => {
-    axios.post(process.env.DISCORD_URL,
+const postSaleToDiscord = async (title, price, date, signature, imageURL) => {
+    await axios.post(process.env.DISCORD_URL,
         {
             "embeds": [
                 {
